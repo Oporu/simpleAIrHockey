@@ -5,15 +5,14 @@
 #include <SFML/Graphics.hpp>
 #include "Ball.hpp"
 #include "Trail.hpp"
-#include <chrono>
-#include <thread>
 #include <iostream>
 #include <random>
 #include <cmath>
+#include <optional>
 class Game final {
     struct BallToBorderCollideResult {
-        enum Type { NONE, LEFT, RIGHT, TOP, BOTTOM };
-        float t;
+        enum Type { LEFT, RIGHT, TOP, BOTTOM };
+        float time;
         Type type;
     };
 	sf::RenderWindow window{ { 800u, 600u }, "simpleAirHockey", sf::Style::Close };
@@ -23,8 +22,8 @@ class Game final {
     std::vector<Trail> trails;
 	void initializeWindow();
 	void handleWindowEvents();
-    static float BallToBallCollideTime(const Ball& ball1, const Ball& ball2, float maxTime);
-    static BallToBorderCollideResult BallToBorderCollideTime(const Ball& ball, sf::FloatRect border, float maxTime);
+    static std::optional<float> BallToBallCollideTime(const Ball& ball1, const Ball& ball2, float maxTime);
+    static std::optional<BallToBorderCollideResult> BallToBorderCollideTime(const Ball& ball, sf::FloatRect border, float maxTime);
 	static void collideBalls(Ball& ball1, Ball& ball2);
 
 public:
@@ -95,7 +94,7 @@ void Game::handleWindowEvents() {
 						ball.velocity.y = 0;
 						break;
 					case Keyboard::Backspace:
-						std::this_thread::sleep_for(std::chrono::seconds(1));
+						sf::sleep(sf::milliseconds(1000));
 						break;
 					case Keyboard::Add:
 					case Keyboard::Equal:
@@ -122,67 +121,67 @@ void Game::handleWindowEvents() {
 		}
 	}
 }
-float Game::BallToBallCollideTime(const Ball& ball1, const Ball& ball2, const float maxTime) {
+std::optional<float> Game::BallToBallCollideTime(const Ball& ball1, const Ball& ball2, const float maxTime) {
     const sf::Vector2f dPos = ball1.getPosition() - ball2.getPosition();
     const sf::Vector2f dVel = ball1.velocity - ball2.velocity;
-	if ((std::atan2(dPos.x*dVel.x + dPos.y*dVel.y, dPos.x*dVel.x - dPos.y*dVel.y)) > 1.571) { // 1.571 rad = 90 degree
-		return -1;
+	if (std::atan2(dPos.x*dVel.x + dPos.y*dVel.y, dPos.x*dVel.x - dPos.y*dVel.y) > 1.571) { // 1.571 rad = 90 degree
+		return std::nullopt;
 	}
-
-
 
     const float a = dVel.x*dVel.x + dVel.y*dVel.y;
     const float b = 2 * (dPos.x*dVel.x + dPos.y*dVel.y);
     const float c = dPos.x*dPos.x + dPos.y*dPos.y - std::pow(ball1.getRadius() + ball2.getRadius(), 2.f);
     const float temp = (b*b) - (4*a*c);
-    if (temp < 0) return -1;
+
+    if (temp < 0) return std::nullopt;
+
     const float sqrtTemp = std::sqrt(temp);
     const float t1 = (-b - sqrtTemp) / (2*a);
     const float t2 = (-b + sqrtTemp) / (2*a);
-    float t = -1;
-    if (t1 >= 0 && t2 >= 0)
-        t = std::min(t1, t2);
-    else if (t1 >= 0)
-        t = t1;
-    else if (t2 >= 0)
-        t = t2;
-    return t <= maxTime ? t : -1;
+    if (t1 >= 0 && t2 >= 0) {
+	    const float t = std::min(t1, t2);
+		return (t <= maxTime) ? std::make_optional(t) : std::nullopt;
+    } else if (t1 >= 0 && t1 <= maxTime) {
+	    return t1;
+    } else if (t2 >= 0 && t2 <= maxTime) {
+	    return t2;
+    }
+    return std::nullopt;
 }
-Game::BallToBorderCollideResult Game::BallToBorderCollideTime(const Ball& ball, const sf::FloatRect border, const float maxTime) {
-    const sf::Vector2f nextPos = ball.getPosition() + (ball.velocity * maxTime);
-    BallToBorderCollideResult result{-1, BallToBorderCollideResult::NONE};
-    if (nextPos.x + ball.getRadius() > border.left + border.width) {
-        const float x = border.left + border.width - ball.getRadius();
-        result.t = (x - ball.getPosition().x) / ball.velocity.x;
-        result.type = BallToBorderCollideResult::RIGHT;
-    } else if (nextPos.x - ball.getRadius() < border.left) {
-        const float x = border.left + ball.getRadius();
-        result.t = (x - ball.getPosition().x) / ball.velocity.x;
-        result.type = BallToBorderCollideResult::LEFT;
+std::optional<Game::BallToBorderCollideResult> Game::BallToBorderCollideTime(const Ball& ball, const sf::FloatRect border, const float maxTime) {
+	const sf::Vector2f& pos = ball.getPosition();
+	const float radius = ball.getRadius();
+	const sf::Vector2f nextPos = pos + (ball.velocity * maxTime);
+    std::optional<BallToBorderCollideResult> result;
+    if (nextPos.x + radius > border.left + border.width) {
+        const float x = border.left + border.width - radius;
+		const float t = (x - pos.x) / ball.velocity.x;
+		result = {t, BallToBorderCollideResult::RIGHT};
+    } else if (nextPos.x - radius < border.left) {
+        const float x = border.left + radius;
+        const float t = (x - pos.x) / ball.velocity.x;
+        result = {t, BallToBorderCollideResult::LEFT};
     }
-    if (nextPos.y + ball.getRadius() > border.top + border.height) {
-        const float y = border.top + border.height - ball.getRadius();
-        const float t2 = (y - ball.getPosition().y) / ball.velocity.y;
-        if (result.type == BallToBorderCollideResult::NONE || result.t > t2) {
-            result.t = t2;
-            result.type = BallToBorderCollideResult::BOTTOM;
+    if (nextPos.y + radius > border.top + border.height) {
+        const float y = border.top + border.height - radius;
+        const float t = (y - pos.y) / ball.velocity.y;
+        if (!result.has_value() || result->time > t) {
+			result = {t, BallToBorderCollideResult::BOTTOM};
         }
-    } else if (nextPos.y - ball.getRadius() < border.top) {
-        const float y = border.top + ball.getRadius();
-        const float t2 = (y - ball.getPosition().y) / ball.velocity.y;
-        if (result.type == BallToBorderCollideResult::NONE || result.t > t2) {
-            result.t = t2;
-            result.type = BallToBorderCollideResult::TOP;
+    } else if (nextPos.y - radius < border.top) {
+        const float y = border.top + radius;
+        const float t = (y - pos.y) / ball.velocity.y;
+        if (!result.has_value() || result->time > t) {
+            result = {t, BallToBorderCollideResult::TOP};
         }
     }
-//    std::cout << "yee " << result.type << '\t' << result.t << std::endl;
-    if (result.t > maxTime || result.t < 0) return {-1, BallToBorderCollideResult::NONE};
+    if (!result.has_value() || result->time > maxTime) return std::nullopt;
     return result;
 }
 
 void Game::update() {
 	this->handleWindowEvents();
-	float t = (float) clock.restart().asMilliseconds();
+	float t = static_cast<float>(clock.restart().asMilliseconds());
     const sf::Vector2f ball2_EndPos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(window));
     trails.emplace_back(ball2.getPosition(), ball2_EndPos, sf::Color::Green);
     ball2.velocity = (ball2_EndPos - ball2.getPosition()) / t;
@@ -191,38 +190,33 @@ void Game::update() {
         if (updateCount++ == 100) {
             return;
         }
-        float collideTime;
-        enum class Collide {
-            NONE, BALL_TO_BALL, BALL_TO_BORDER
-        };
-        Collide collide = Collide::NONE;
-        const float ballToBallCollideTime = BallToBallCollideTime(ball, ball2, t);
-        if (ballToBallCollideTime > 0.0001f) {
-            collideTime = ballToBallCollideTime;
-            collide = Collide::BALL_TO_BALL;
+		struct Collide {
+			enum Type { BALL_TO_BALL, BALL_TO_BORDER };
+			float time;
+			Type type;
+		};
+        std::optional<Collide> collide;
+        const std::optional<float> ballToBallCollideTime = BallToBallCollideTime(ball, ball2, t);
+        if (ballToBallCollideTime.has_value() && ballToBallCollideTime.value() > 0.0001f) {
+			collide = {ballToBallCollideTime.value(), Collide::BALL_TO_BALL};
         }
-        const BallToBorderCollideResult ballToBorderCollideResult = BallToBorderCollideTime(ball, {{0.f, 0.f},static_cast<sf::Vector2f>(window.getSize())}, collide == Collide::NONE ? t : collideTime);
+        const std::optional<BallToBorderCollideResult> ballToBorderCollideResult = BallToBorderCollideTime(ball, {{0.f, 0.f},static_cast<sf::Vector2f>(window.getSize())}, collide.has_value() ? collide->time : t);
 
-        if (ballToBorderCollideResult.type != BallToBorderCollideResult::NONE) {
-            if (collide == Collide::NONE || collideTime > ballToBorderCollideResult.t) {
-                collideTime = ballToBorderCollideResult.t;
-                collide = Collide::BALL_TO_BORDER;
-            }
+        if (ballToBorderCollideResult.has_value()) {
+			collide = {ballToBorderCollideResult->time, Collide::BALL_TO_BORDER};
         }
 
-
-
-        if (collide != Collide::NONE) {
-			collideTime -= 0.00001f;
-            t -= collideTime;
-            sf::Vector2f ballNextPos = ball.getPosition() + (ball.velocity*collideTime);
-            sf::Vector2f ball2NextPos = ball2.getPosition() + (ball2.velocity*collideTime);
+        if (collide) {
+			collide->time -= 0.00001f;
+            t -= collide->time;
+            sf::Vector2f ballNextPos = ball.getPosition() + (ball.velocity*collide->time);
+            sf::Vector2f ball2NextPos = ball2.getPosition() + (ball2.velocity*collide->time);
             trails.emplace_back(ball2.getPosition(), ball2NextPos, sf::Color::Green);
 
-            switch (collide) {
+            switch (collide->type) {
                 case Collide::BALL_TO_BORDER:
                     trails.emplace_back(ball.getPosition(), ballNextPos, sf::Color::Yellow);
-                    switch (ballToBorderCollideResult.type) {
+                    switch (ballToBorderCollideResult->type) {
                         case BallToBorderCollideResult::BOTTOM:
                         case BallToBorderCollideResult::TOP:
                             ball.velocity.y *= -1;
@@ -246,15 +240,12 @@ void Game::update() {
             const sf::Vector2f ballNextPos = ball.getPosition() + (ball.velocity * t);
             trails.emplace_back(ball.getPosition(), ballNextPos, sf::Color::White);
             ball.setPosition(ballNextPos);
-            t = 0;
+//            t = 0;
+	        break;
         }
-//        std::cout << (int)collide << std::endl;
-//        std::cout << window.getView().getViewport().left << ' ' << window.getView().getViewport().top << ' ' << window.getView().getViewport().height << ' ' << window.getView().getViewport().width;
     }
     ball2.setPosition(ball2_EndPos);
     ball.velocity *= 0.975f;
-//    std::cout << "ball " << ball.getPosition().x << ' ' << ball.getPosition().y << std::endl;
-//    std::cout << ball2.getPosition().x << ' ' << ball2.getPosition().y << std::endl;
 }
 void Game::render() {
 	this->window.clear();
